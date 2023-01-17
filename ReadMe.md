@@ -8,6 +8,9 @@
 
 - 安装python3.8+
 - 安装依赖包
+- window环境需要额外安装rar:
+    - 打开libs，点击7z2201.exe进行安装
+    - 安装目录选择到./libs/7-Zip
 
 ```angular2html
 pip3 install -r requirements.txt
@@ -30,16 +33,9 @@ pip3 install -r requirements.txt
 ## 批量导入TIKTOK订单，使用说明
 
 - 打开upload目录
-- 将rar包放到upload目录，例如xxx.rar
-- 15秒后upload目录中会自动生成一个同名的excel文件xxx.xlsx
+- 将面单的PDF压缩包和对应的结算单excel表放到upload目录。
+    - rar文件名为： 20xx-xx-xx.rar
+    - excel的文件为：20xx-xx-xx.sku.xlsx
+- 15秒后upload目录中会自动生成一个同名的excel文件用来导入到ERP
+    - 生成的文件名为： 20xx-xx-xx.big_seller.xlsx
 - 到big seller系统导入
-
-## 商品和big seller的SKU转换， 使用说明
-
-- ./data/sku_map.txt文件打开，直接编辑
-- 参考如下格式编辑
-
-```
-<tiktok 面单中显示的商品> = <big seller 录入的sku名>
-New combination = CW-2-Set (new type)
-```

@@ -1,5 +1,5 @@
 *.pyc
-data
+db
 .ipynb_checkpoints
 log
 .DS_store
