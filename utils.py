@@ -63,8 +63,11 @@ def execute_command(cmdline, work_dir=None, std_input_data=None, encoding="UTF-8
             )
     stdout, stderr = child_proc.communicate(input=std_input_data)
     return_code = child_proc.wait()
-    return return_code, stdout, stderr
-
+    if os.name == 'nt':
+        return return_code, stdout.decode("gbk"), stderr.decode("gbk")
+    else:
+        return return_code, stdout, stderr
+    
 
 def parse_pdf_fd(fp, password="") -> typing.List[str]:
     text_list = []
@@ -103,7 +106,9 @@ def parse_pdf(file_path: str) -> typing.List[str]:
 
 def extract_file(rar_file, tmp_dir):
     if os.name == 'nt':
-        cmd = f"./libs/7-Zip/7z2201.exe e -o{tmp_dir} {rar_file}"
+        tmp_dir = tmp_dir.replace("./", "")
+        cmd = f".\\libs\\7-Zip\\7z.exe e -o{tmp_dir} {rar_file}"
+        # os.system(cmd)
     else:
         cmd = f"./libs/7zz e -o{tmp_dir} {rar_file}"
     ret, out, err = execute_command(

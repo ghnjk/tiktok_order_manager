@@ -2,3 +2,5 @@ pdfminer
 pycryptodome
 openpyxl
 patool
+reportlab
+PyPDF2

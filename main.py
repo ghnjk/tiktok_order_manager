@@ -10,7 +10,7 @@ import logging.config as log_config
 import os
 import shutil
 import time
-from tiktok_order import TikTokOrder, append_orders_to_xls, SkuMapper, save_order_to_db
+from tiktok_order import TikTokOrder, append_orders_to_xls, SkuMapper, save_order_to_db, generate_print_pdf
 from utils import parse_pdf, extract_file
 
 __current_pdf_file_path = None
@@ -25,6 +25,9 @@ def parse_and_convert_tiktok_orders(rar_file: str, xls_file: str, sku_order_xls:
     sku_mapper = SkuMapper()
     sku_mapper.load_sku_map(sku_order_xls)
     order_list = []
+    # 打印所有的pdf文件路径
+    print_all_pdf_file = rar_file.replace(".rar", ".print_all.pdf")
+    # 解压和处理pdf文件
     rar_base_name = os.path.basename(rar_file)[: -4]
     tmp_dir = f"./tmp/{rar_base_name}"
     if os.path.isdir(tmp_dir):
@@ -37,6 +40,8 @@ def parse_and_convert_tiktok_orders(rar_file: str, xls_file: str, sku_order_xls:
             continue
         if os.path.isfile(abs_path):
             __current_pdf_file_path = abs_path
+            __current_pdf_lines = []
+            __current_order = None
             order = TikTokOrder()
             pdf_lines = parse_pdf(abs_path)
             __current_pdf_lines = pdf_lines
@@ -46,13 +51,14 @@ def parse_and_convert_tiktok_orders(rar_file: str, xls_file: str, sku_order_xls:
             if valid:
                 logging.debug(f"add order {order.tiktok_order_id}")
                 logging.debug(order)
+                order.pdf_file_path = save_order_to_db(abs_path, order)
                 order_list.append(order)
-                save_order_to_db(abs_path, order)
             else:
                 logging.error(f"parse file {file} invalid order {cause}")
                 logging.error(order)
                 raise Exception(f"parse file {file} invalid order.")
     append_orders_to_xls(order_list, xls_file)
+    generate_print_pdf(order_list, print_all_pdf_file)
     logging.info(f"process file {rar_file} order count {len(order_list)}")
     print(f"process file {rar_file} order count {len(order_list)}")
 
@@ -66,7 +72,7 @@ def output_error_file(abs_file_path, e, err_file):
         fp.write(f"pdf_path: {__current_pdf_file_path}\n")
         fp.write("-------------\n")
         for i in range(len(__current_pdf_lines)):
-            fp.write(f">>> line[{i} {__current_pdf_lines[i]}\n")
+            fp.write(f">>> line[{i}] {__current_pdf_lines[i]}\n")
         fp.write("-------------\n")
         fp.write(f"order: {str(__current_order)}\n")
 

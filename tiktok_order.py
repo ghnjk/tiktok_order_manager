@@ -23,6 +23,7 @@ class SkuMapper(object):
 
     def __init__(self):
         self.order_sku_info: typing.Dict[str, typing.List[dict]] = {}
+        self.order_cod_payments: typing.Dict[str, float] = {}
 
     def load_sku_map(self, sku_order_xls: str):
         wb = load_workbook(filename=sku_order_xls)
@@ -47,9 +48,15 @@ class SkuMapper(object):
                 "count": count,
                 "item_price": item_price
             })
+            cod_amount = str(ws.cell(row=row_idx, column=6).value)
+            cod_amount = float(cod_amount.replace(",", ""))
+            self.order_cod_payments[order_no] = cod_amount
 
-    def get(self, tiktok_order_id: str):
+    def get_sku_list(self, tiktok_order_id: str):
         return self.order_sku_info.get(tiktok_order_id, None)
+
+    def get_cod_amount(self, tiktok_order_id: str):
+        return self.order_cod_payments.get(tiktok_order_id, None)
 
 
 class TikTokOrder(JsonSerializable):
@@ -69,53 +76,53 @@ class TikTokOrder(JsonSerializable):
         self.sender_name: str = ""
         self.sender_phone: str = ""
         self.price: float = 0
+        self.pdf_file_path: str = ""
 
     def __str__(self):
-        return f"TT Order ID: {self.tiktok_order_id}\n" \
-               f"Track Order: {self.track_order}\n" \
-               f"SKU: {self.goods}\n" \
-               f"Weight: {self.weight}\n" \
-               f"Payment: {self.payment}\n" \
-               f"Price: {self.price}\n" \
-               f"---------\n" \
-               f"{self.sender_addr}\n" \
-               f"---------\n" \
-               f"{self.receiver_addr}"
+        return json.dumps(self.to_dict(), indent=4)
 
     def parse(self, text_list: typing.List[str], sku_mapper: SkuMapper):
         # for line in text_list:
         #     print("======")
         #     print(line)
-        offset = 0
         for i in range(len(text_list)):
-            if i - offset == 1:
+            if i == 1:
                 self.track_order = text_list[i]
-            elif i - offset == 3:
+            elif i == 3:
                 self.sender_name = text_list[i]
-            elif i - offset == 4:
+            elif i == 4:
                 self.sender_addr = text_list[i]
-            elif i - offset == 6:
-                self.receiver_addr = text_list[i]
-            elif i - offset == 7:
-                if text_list[i].startswith("Weigh"):
+            elif i in [5, 6]:
+                if text_list[i].strip().startswith("Receiver:"):
+                    self.receiver_addr = text_list[i]
+            if i in (7, 8):
+                if text_list[i].strip().startswith("Goods:"):
+                    self.goods = text_list[i].split("\n")[0][7:]
+                elif text_list[i].startswith("Weigh"):
                     self.weight = text_list[i]
                 else:
-                    offset += 1
                     s = text_list[i].strip()
                     if s.find("+63") >= 0:
                         self.receiver_phone = s
-            elif i - offset == 8:
-                self.goods = text_list[i].split("\n")[0][7:]
-                # self.payment = text_list[i].split("\n")[1]
-            elif i - offset in [9, 10]:
-                if len(text_list[i]) > 6:
-                    self.cod = text_list[i].replace("\n", " ")[5:].replace("PHP", "").strip()
-            elif i - offset in [11, 12, 13, 14, 15]:
-                if text_list[i].isdigit():
-                    self.tiktok_order_id = text_list[i]
-        self.sku_list = sku_mapper.get(self.tiktok_order_id)
+            if i >= 7:
+                # cod收费和tiktok_order_id可能顺序是乱的
+                if len(text_list[i].strip()) == 18 and text_list[i].strip().isdigit():
+                    self.tiktok_order_id = text_list[i].strip()
+                else:
+                    s = text_list[i].replace("\n", " ").strip()
+                    if s.startswith("COD :"):
+                        self.cod = s[5:].replace("PHP", "").strip()
+        if len(self.tiktok_order_id) == 0:
+            raise Exception("parse failed. tiktok_order_id is empty")
+        self.sku_list = sku_mapper.get_sku_list(self.tiktok_order_id)
+        if self.sku_list is None:
+            raise Exception(f"tiktok_order_id {self.tiktok_order_id} not find sku xlsx")
         # format price
         self.format_price()
+        cod_price = sku_mapper.get_cod_amount(self.tiktok_order_id)
+        if cod_price is None or (cod_price != self.price and self.cod != "0"):
+            raise Exception(
+                f"tiktok_order_id {self.tiktok_order_id} cod amount {self.price} not consist with {cod_price}")
         # 格式化接收人信息
         self.format_receiver_info()
         # 格式化发送人信息
@@ -124,11 +131,16 @@ class TikTokOrder(JsonSerializable):
         self.rewrite_sender_info()
 
     def to_xls_row(self) -> typing.List[typing.List[str]]:
+        is_free = False
+        if self.cod == "0" and self.price < 1e-4:
+            is_free = True
         rows = []
         for sku_info in self.sku_list:
             sku = sku_info["sku"]
             count = sku_info["count"]
             item_price = sku_info["item_price"]
+            if is_free:
+                item_price = 0
             rows.append(
                 [
                     self.tiktok_order_id,
@@ -188,8 +200,12 @@ class TikTokOrder(JsonSerializable):
         return True, ""
 
     def format_price(self):
+        self.cod = self.cod.replace(",", "").strip()
+        if self.cod == "0":
+            self.price = 0.0
+            return
         # 解析价格
-        s = self.cod.replace(",", "").strip()
+        s = self.cod
         ps = ""
         for c in s:
             if c.isdigit() or c == ".":
@@ -197,7 +213,7 @@ class TikTokOrder(JsonSerializable):
             else:
                 break
         self.price = float(ps)
-        if self.price <= 1e-4:
+        if self.price <= 1e-4 and self.cod != "0":
             logging.error(f"invalid price {self.price}")
             raise Exception(f"invalid price {self.price}")
         # 核对sku的价格
@@ -298,3 +314,77 @@ def save_order_to_db(pdf_file_path: str, order: TikTokOrder):
     order_info_file = os.path.join(db_dir, f"{order.tiktok_order_id}.json")
     with open(order_info_file, "w", encoding="utf-8") as fp:
         json.dump(order.to_dict(), fp, indent=4)
+    return backup_pdf_file
+
+
+def __gen_sku_tmp_pdf(order: TikTokOrder):
+    """
+    用于覆盖原来面单的sku信息的pdf页面
+    pdf 页面大小： (宽*高）10.52 × 14.82厘米
+
+    The pagesize argument is a tuple of two numbers in points (1/72 of an inch).
+
+    :param order:
+    :return:
+    """
+    from reportlab.pdfgen import canvas
+    from reportlab.platypus import Table, TableStyle
+    from reportlab.lib import colors
+    today = time.strftime("%Y%m%d", time.localtime())
+    # create sku tmp pdf
+    sku_tmp_pdf_path = f"./tmp/{today}/{order.tiktok_order_id}.sku.pdf"
+    if not os.path.isdir(os.path.dirname(sku_tmp_pdf_path)):
+        os.mkdir(os.path.dirname(sku_tmp_pdf_path))
+    cm_per_inch = 2.54
+    # (288, 360)
+    c = canvas.Canvas(sku_tmp_pdf_path, pagesize=(
+        10.52 / cm_per_inch * 72,
+        14.82 / cm_per_inch * 72
+    ))
+    data = []
+    i = 0
+    for sku in order.sku_list:
+        if i % 5 == 0:
+            data.append([])
+        data[-1].append(sku["sku"])
+        data[-1].append("* {}".format(sku["count"]))
+        i += 1
+    while i < 10:
+        if i % 5 == 0:
+            data.append([])
+        data[-1].append("-----")
+        data[-1].append("   ")
+        i += 1
+    table = Table(data)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+        ("FONTSIZE", (0, 0), (-1, -1), 7),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 1),
+        ("GRID", (1, 0), (1, -1), 1, colors.black),
+        ("GRID", (3, 0), (3, -1), 1, colors.black),
+        ("GRID", (5, 0), (5, -1), 1, colors.black),
+        ("GRID", (7, 0), (7, -1), 1, colors.black),
+        ("GRID", (9, 0), (9, -1), 1, colors.black)
+    ]))
+    table.wrapOn(c, 20, 50)
+    table.drawOn(c, 12, 4)
+    c.showPage()
+    c.save()
+    return sku_tmp_pdf_path
+
+
+def generate_print_pdf(order_list: typing.List[TikTokOrder], print_all_pdf_file: str):
+    from PyPDF2 import PdfReader, PdfWriter
+    from copy import copy
+    with PdfWriter(print_all_pdf_file) as print_all:
+        for order in order_list:
+            sku_tmp_pdf_path = __gen_sku_tmp_pdf(order)
+            sku_reader = PdfReader(sku_tmp_pdf_path)
+            r = PdfReader(order.pdf_file_path)
+            source_page = r.pages[0]
+            gen_page = copy(source_page)
+            gen_page.merge_page(sku_reader.pages[0])
+            print_all.add_page(gen_page)
